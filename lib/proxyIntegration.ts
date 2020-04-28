@@ -145,11 +145,15 @@ export const process: ProcessMethod<ProxyIntegrationConfig, APIGatewayProxyEvent
       }
       return processActionAndReturn(actionConfig, proxyEvent, context, headers).catch(error => {
         console.log('Error while handling action function.', error)
-        return convertError(error, errorMapping, headers)
+        const convertedError = convertError(error, errorMapping, headers)
+
+        return convertedError ? convertedError : createGenericError(error)
       })
     } catch (error) {
       console.log('Error while evaluating matching action handler', error)
-      return convertError(error, errorMapping, headers)
+      const convertedError = convertError(error, errorMapping, headers)
+
+      return convertedError ? convertedError : createGenericError(error)
     }
   }
 
@@ -174,19 +178,25 @@ const hasReason = (error: any): error is { reason: string } => typeof error.reas
 const hasStatus = (error: any): error is { statusCode: number } => typeof error.statusCode === 'number'
 
 const convertError = (error: ProxyIntegrationError | Error, errorMapping?: ProxyIntegrationErrorMapping, headers?: APIGatewayProxyResult['headers']) => {
+  let result = null;
   if (hasReason(error) && errorMapping && errorMapping[error.reason]) {
-    return {
+    result = {
       statusCode: errorMapping[error.reason],
       body: JSON.stringify({ message: error.message, error: error.reason }),
       headers
     }
   } else if (hasStatus(error)) {
-    return {
+    result = {
       statusCode: error.statusCode,
       body: JSON.stringify({ message: error.message, error: error.statusCode }),
       headers: addCorsHeaders({})
     }
   }
+
+  return result;
+}
+
+const createGenericError = (error: ProxyIntegrationError | Error) => {
   try {
     return {
       statusCode: 500,
