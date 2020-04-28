@@ -31,11 +31,13 @@ export type ProxyIntegrationError = {
   message: string
 }
 
+export type ProxyIntegrationErrorHandler = (error: ProxyIntegrationError | Error) => APIGatewayProxyResult | Promise<APIGatewayProxyResult>
 export interface ProxyIntegrationConfig {
   cors?: boolean
   routes: ProxyIntegrationRoute[]
   debug?: boolean
   errorMapping?: ProxyIntegrationErrorMapping
+  errorHandler?: ProxyIntegrationErrorHandler
   defaultHeaders?: APIGatewayProxyResult['headers']
   proxyPath?: string
 }
@@ -112,6 +114,8 @@ export const process: ProcessMethod<ProxyIntegrationConfig, APIGatewayProxyEvent
     const errorMapping = proxyIntegrationConfig.errorMapping || {}
     errorMapping['NO_MATCHING_ACTION'] = 404
 
+    const errorHandler: ProxyIntegrationErrorHandler = proxyIntegrationConfig.errorHandler || genericErrorHandler
+
     if (proxyIntegrationConfig.proxyPath) {
       event.path = (event.pathParameters || {})[proxyIntegrationConfig.proxyPath]
       if (proxyIntegrationConfig.debug) {
@@ -145,15 +149,11 @@ export const process: ProcessMethod<ProxyIntegrationConfig, APIGatewayProxyEvent
       }
       return processActionAndReturn(actionConfig, proxyEvent, context, headers).catch(error => {
         console.log('Error while handling action function.', error)
-        const convertedError = convertError(error, errorMapping, headers)
-
-        return convertedError ? convertedError : createGenericError(error)
+        return handleError(error, errorMapping, headers, errorHandler)
       })
     } catch (error) {
       console.log('Error while evaluating matching action handler', error)
-      const convertedError = convertError(error, errorMapping, headers)
-
-      return convertedError ? convertedError : createGenericError(error)
+      return handleError(error, errorMapping, headers, errorHandler)
     }
   }
 
@@ -196,7 +196,7 @@ const convertError = (error: ProxyIntegrationError | Error, errorMapping?: Proxy
   return result;
 }
 
-const createGenericError = (error: ProxyIntegrationError | Error) => {
+const genericErrorHandler: ProxyIntegrationErrorHandler = (error) => {
   try {
     return {
       statusCode: 500,
@@ -207,7 +207,7 @@ const createGenericError = (error: ProxyIntegrationError | Error) => {
 
   return {
     statusCode: 500,
-    body: JSON.stringify({ error: 'ServerError', message: 'Generic error' })
+    body: JSON.stringify({ error: 'ServerError', message: 'Generic error' }),
   }
 }
 
@@ -261,3 +261,11 @@ const isLocalExecution = (event: ProxyIntegrationEvent) => {
     && event.headers.Host
     && (event.headers.Host.startsWith('localhost') || event.headers.Host.startsWith('127.0.0.1'))
 }
+function handleError(error: any, errorMapping: ProxyIntegrationErrorMapping, headers: { [header: string]: string | number | boolean }, errorHandler: ProxyIntegrationErrorHandler) {
+  const convertedError = convertError(error, errorMapping, headers)
+
+  console.log(convertedError);
+  
+  return convertedError ? convertedError : errorHandler(error)
+}
+

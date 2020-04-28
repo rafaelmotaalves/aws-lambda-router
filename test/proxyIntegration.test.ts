@@ -371,7 +371,7 @@ describe('proxyIntegration.routeHandler', () => {
       headers: Object.assign({ 'Content-Type': 'application/json' }, expectedCorsHeaders)
     })
   })
-  it('should modify incorrect error', async () => {
+  it('should modify incorrect error when no error handler function is passed', async () => {
     const incorrectError = { body: { reason: 'oops' } }
     const routeConfig = {
       routes: [
@@ -395,29 +395,97 @@ describe('proxyIntegration.routeHandler', () => {
     })
   })
 
-  it('should pass through error statuscode', async () => {
-    const statusCodeError = { statusCode: 666, message: { reason: 'oops' } }
+  it('should execute and return errorHandler function result when an incorrect error in thrown', async () => {
+    const errorHandlerReturnValue = {
+      statusCode: 500,
+      headers: expectedCorsHeaders,
+      message: '{"message": "Internal Server Error"}'
+    }
+    const errorHandlerSpy = jasmine.createSpy('errorHandler').and.returnValue(errorHandlerReturnValue)
+
+    const incorrectError = { body: { reason: 'oops' } }
     const routeConfig = {
       routes: [
         {
           method: 'GET',
           path: '/',
           action: () => {
-            throw statusCodeError
+            throw incorrectError
           }
         }
-      ]
+      ],
+      errorHandler: errorHandlerSpy
     }
     const result = await proxyIntegration(routeConfig, {
       path: '/',
       httpMethod: 'GET'
     } as APIGatewayProxyEvent, context)
-    expect(result).toEqual({
-      statusCode: 666,
-      body: '{"message":{"reason":"oops"},"error":666}',
-      headers: expectedCorsHeaders
-    })
+
+    expect(result).toEqual(errorHandlerReturnValue)
+    expect(errorHandlerSpy).toHaveBeenCalledWith(incorrectError)
   })
+
+  it("should use errorMapping when one is passed and correct error is thrown", async () => {
+    const errorHandlerSpy = jasmine.createSpy('errorHandler').and.returnValue({
+      statusCode: 500,
+      headers: expectedCorsHeaders,
+      message: '{"message": "Internal Server Error"}'
+    })
+
+    const correctError = { reason: 'BadRequest', message: "Invalid input." }
+    const routeConfig = {
+      routes: [
+        {
+          method: 'GET',
+          path: '/',
+          action: () => {
+            throw correctError
+          }
+        }
+      ],
+      errorMapping: {
+        "BadRequest": 400
+      },
+      errorHandler: errorHandlerSpy
+    }
+    const result = await proxyIntegration(routeConfig, {
+      path: '/',
+      httpMethod: 'GET'
+    } as APIGatewayProxyEvent, context)
+
+    expect(result).toEqual({      
+      statusCode: 400,
+      headers: Object.assign({ 'Content-Type': 'application/json' }),
+      body: '{"message":"Invalid input.","error":"BadRequest"}'
+    })
+    expect(errorHandlerSpy).toBeCalledTimes(0)
+  })
+
+
+
+it('should pass through error statuscode', async () => {
+  const statusCodeError = { statusCode: 666, message: { reason: 'oops' } }
+  const routeConfig = {
+    routes: [
+      {
+        method: 'GET',
+        path: '/',
+        action: () => {
+          throw statusCodeError
+        }
+      }
+    ]
+  }
+  const result = await proxyIntegration(routeConfig, {
+    path: '/',
+    httpMethod: 'GET'
+  } as APIGatewayProxyEvent, context)
+  expect(result).toEqual({
+    statusCode: 666,
+    body: '{"message":{"reason":"oops"},"error":666}',
+    headers: expectedCorsHeaders
+  })
+})
 })
 
 describe('proxyIntegration.proxyPath', () => {
